@@ -65,12 +65,54 @@ function getNextRiskPoint(last, inc = 12) {
   return Math.min(last + inc, 100)
 }
 
+function isSuspTx(t) {
+  return t.suspicious || t.fraudState === 'review' || t.fraudState === 'frozen'
+}
+
+function getAiBullets(t) {
+  if (!t) return []
+
+  const f = (t.flags || []).map((x) => x.toLowerCase())
+  const out = []
+
+  if (f.some((x) => x.includes('amount'))) {
+    out.push('Amount exceeds normal spending pattern for this account.')
+  }
+
+  if (f.some((x) => x.includes('merchant') || x.includes('unknown'))) {
+    out.push('Unknown merchant detected compared to prior transaction history.')
+  }
+
+  if (f.some((x) => x.includes('category') || x.includes('spending pattern'))) {
+    out.push('Unusual category for this user based on historical behavior.')
+  }
+
+  if (!out.length && t.flags?.length) {
+    t.flags.forEach((x) => out.push(x))
+  }
+
+  if (!out.length) {
+    out.push('Pattern deviates from baseline profile and requires additional review.')
+  }
+
+  return out
+}
+
+function topRows(mapObj, limit = 3) {
+  return Object.entries(mapObj)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([name, count]) => ({ name, count }))
+}
+
 function App() {
   const [tx, setTx] = useState(() => hydrateTx(transactions))
   const [al, setAl] = useState(null)
   const [riskTrend, setRiskTrend] = useState(seedTrend)
   const [flt, setFlt] = useState('all')
   const [alertsToday, setAlertsToday] = useState(0)
+  const [selTx, setSelTx] = useState(null)
+  const [lastSimId, setLastSimId] = useState(null)
   const tRef = useRef(null)
 
   const riskScore = riskTrend[riskTrend.length - 1] || 0
@@ -84,8 +126,58 @@ function App() {
     [tx]
   )
 
+  const baseTx = useMemo(
+    () => tx.filter((t) => t.amount < 0 && t.fraudState === 'clear' && t.type !== 'fraud'),
+    [tx]
+  )
+
+  const profile = useMemo(() => {
+    const count = baseTx.length
+    const sum = baseTx.reduce((acc, t) => acc + Math.abs(t.amount), 0)
+    const avg = count ? Math.round(sum / count) : 0
+
+    const catMap = baseTx.reduce((acc, t) => {
+      const k = t.category
+      acc[k] = (acc[k] || 0) + 1
+      return acc
+    }, {})
+
+    const merchMap = baseTx.reduce((acc, t) => {
+      const k = t.merchant
+      acc[k] = (acc[k] || 0) + 1
+      return acc
+    }, {})
+
+    return {
+      avg,
+      sampleSize: count,
+      cats: topRows(catMap),
+      merchants: topRows(merchMap)
+    }
+  }, [baseTx])
+
+  const simTxItem = useMemo(
+    () => (lastSimId ? tx.find((t) => t.id === lastSimId) || null : null),
+    [lastSimId, tx]
+  )
+
+  const profileMsg = useMemo(() => {
+    if (!simTxItem || !isSuspTx(simTxItem)) return ''
+
+    const catSet = new Set(profile.cats.map((x) => x.name.toLowerCase()))
+    const merchSet = new Set(profile.merchants.map((x) => x.name.toLowerCase()))
+    const amountSpike = profile.avg > 0 && Math.abs(simTxItem.amount) > profile.avg * 2
+    const oddCat = !catSet.has(simTxItem.category.toLowerCase())
+    const oddMerch = !merchSet.has(simTxItem.merchant.toLowerCase())
+
+    if (!amountSpike && !oddCat && !oddMerch && !simTxItem.suspicious) return ''
+
+    return `Deviation detected: the latest simulated fraud transaction does not match this user's normal behavior profile.`
+  }, [profile, simTxItem])
+
   const risk = useMemo(() => getRisk(riskScore), [riskScore])
   const ai = useMemo(() => getAiText(susp), [susp])
+  const aiBullets = useMemo(() => getAiBullets(selTx), [selTx])
 
   const filteredTx = useMemo(() => {
     if (flt === 'suspicious') {
@@ -104,6 +196,8 @@ function App() {
   }
 
   const onSimFraud = () => {
+    let nextId = null
+
     setTx((s) => {
       const n = flagTx(
         {
@@ -114,8 +208,11 @@ function App() {
         },
         s
       )
+      nextId = n.id
       return [n, ...s]
     })
+
+    if (nextId) setLastSimId(nextId)
 
     setAlertsToday((v) => v + 1)
     setRiskTrend((s) => {
@@ -155,6 +252,14 @@ function App() {
       }
     }))
 
+    if (act === 'approve' && selTx?.id === id) {
+      setSelTx(null)
+    }
+
+    if (act === 'approve' && lastSimId === id) {
+      setLastSimId(null)
+    }
+
     if (act === 'freeze') {
       pushAl('warn', 'Security Action: Transaction Frozen')
       return
@@ -168,6 +273,11 @@ function App() {
     pushAl('danger', 'Security Action: Transaction approved and restored')
   }
 
+  const onInspect = (t) => {
+    if (!isSuspTx(t)) return
+    setSelTx(t)
+  }
+
   useEffect(() => {
     if (!al) return undefined
 
@@ -178,6 +288,29 @@ function App() {
       if (tRef.current) window.clearTimeout(tRef.current)
     }
   }, [al])
+
+  useEffect(() => {
+    if (!selTx) return
+
+    const cur = tx.find((t) => t.id === selTx.id)
+    if (!cur || !isSuspTx(cur)) {
+      setSelTx(null)
+      return
+    }
+
+    if (cur !== selTx) {
+      setSelTx(cur)
+    }
+  }, [selTx, tx])
+
+  useEffect(() => {
+    if (!lastSimId) return
+
+    const cur = tx.find((t) => t.id === lastSimId)
+    if (!cur || !isSuspTx(cur)) {
+      setLastSimId(null)
+    }
+  }, [lastSimId, tx])
 
   const alTone = al?.tone === 'danger'
     ? 'border-rose-500/70 bg-rose-500/15 text-rose-100'
@@ -245,6 +378,8 @@ function App() {
             <SummaryCards
               ai={ai}
               items={tx}
+              profile={profile}
+              profileMsg={profileMsg}
               risk={risk}
               riskScore={riskScore}
               riskTrend={riskTrend}
@@ -260,6 +395,7 @@ function App() {
               onApprove={(id) => onFraudAction(id, 'approve')}
               onFilter={setFlt}
               onFreeze={(id) => onFraudAction(id, 'freeze')}
+              onInspect={onInspect}
               onReview={(id) => onFraudAction(id, 'review')}
               suspCount={susp.length}
               totalCount={tx.length}
@@ -267,6 +403,55 @@ function App() {
           </div>
         </main>
       </div>
+
+      <AnimatePresence>
+        {selTx && (
+          <motion.div
+            animate={{ opacity: 1 }}
+            className="fixed inset-0 z-40 flex items-end justify-center bg-black/55 p-4 backdrop-blur-sm sm:items-center"
+            exit={{ opacity: 0 }}
+            initial={{ opacity: 0 }}
+            onClick={() => setSelTx(null)}
+          >
+            <motion.section
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              className="glass-panel w-full max-w-md border-violet-400/40 p-4"
+              exit={{ opacity: 0, y: 10, scale: 0.98 }}
+              initial={{ opacity: 0, y: 16, scale: 0.98 }}
+              onClick={(e) => e.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+              aria-label="AI explanation for suspicious transaction"
+              transition={{ duration: 0.2, ease: 'easeOut' }}
+            >
+              <div className="mb-3 flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-[11px] uppercase tracking-[0.18em] text-violet-300">AI Explanation</p>
+                  <h3 className="mt-1 text-sm font-semibold text-zinc-100">Why this transaction was flagged</h3>
+                  <p className="mt-1 text-xs text-zinc-400">{selTx.merchant} • {selTx.category}</p>
+                </div>
+                <button
+                  aria-label="Close AI explanation"
+                  className="rounded-md border border-white/20 p-1 text-zinc-300 transition hover:bg-white/10"
+                  onClick={() => setSelTx(null)}
+                  type="button"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+
+              <ul className="space-y-2 text-sm text-zinc-200">
+                {aiBullets.map((b) => (
+                  <li key={b} className="flex items-start gap-2">
+                    <span className="mt-1 h-1.5 w-1.5 rounded-full bg-violet-300" />
+                    <span>{b}</span>
+                  </li>
+                ))}
+              </ul>
+            </motion.section>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }

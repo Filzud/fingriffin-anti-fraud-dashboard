@@ -1,4 +1,4 @@
-import { AlertOctagon, Landmark, ShieldCheck, Sparkles } from 'lucide-react'
+import { AlertOctagon, Landmark, ShieldCheck, Sparkles, UserRound } from 'lucide-react'
 
 const fmt = new Intl.NumberFormat('en-US', {
   style: 'currency',
@@ -90,7 +90,62 @@ function RiskTrend({ data }) {
   )
 }
 
-function SummaryCards({ ai, items, risk, riskScore, riskTrend, score, suspCount }) {
+function TopList({ rows, emptyText }) {
+  if (!rows.length) {
+    return <p className="text-xs text-zinc-500">{emptyText}</p>
+  }
+
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {rows.map((r) => (
+        <span
+          key={r.name}
+          className="inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-zinc-300"
+        >
+          <span>{r.name}</span>
+          <span className="text-zinc-500">({r.count})</span>
+        </span>
+      ))}
+    </div>
+  )
+}
+
+function BehaviorCard({ profile, profileMsg }) {
+  return (
+    <article className="glass-panel p-4">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-sm font-medium text-zinc-200">User Behavior Profile</h3>
+        <UserRound className="h-4 w-4 text-violet-300" />
+      </div>
+
+      <div className="mt-3 rounded-xl border border-white/10 bg-white/5 p-3">
+        <p className="text-[11px] uppercase tracking-wider text-zinc-400">Average Transaction Amount</p>
+        <p className="mt-1 text-xl font-semibold text-violet-200">{fmt.format(-profile.avg)}</p>
+        <p className="mt-1 text-[11px] text-zinc-500">Based on {profile.sampleSize} regular outgoing transactions</p>
+      </div>
+
+      <div className="mt-3 space-y-3">
+        <div>
+          <p className="mb-1.5 text-[11px] uppercase tracking-wider text-zinc-400">Most Common Spending Categories</p>
+          <TopList rows={profile.cats} emptyText="Not enough spending history yet" />
+        </div>
+
+        <div>
+          <p className="mb-1.5 text-[11px] uppercase tracking-wider text-zinc-400">Typical Merchants</p>
+          <TopList rows={profile.merchants} emptyText="No recurring merchants detected" />
+        </div>
+      </div>
+
+      {profileMsg && (
+        <div className="mt-3 rounded-xl border border-rose-400/50 bg-rose-500/15 px-3 py-2 text-xs font-medium text-rose-100">
+          {profileMsg}
+        </div>
+      )}
+    </article>
+  )
+}
+
+function SummaryCards({ ai, items, profile, profileMsg, risk, riskScore, riskTrend, score, suspCount }) {
   const total = items.reduce((sum, t) => sum + t.amount, 0)
 
   const byCat = items
@@ -149,6 +204,8 @@ function SummaryCards({ ai, items, risk, riskScore, riskTrend, score, suspCount 
         <p className="mt-3 text-sm leading-relaxed text-zinc-300">{ai}</p>
         <RiskTrend data={riskTrend} />
       </article>
+
+      <BehaviorCard profile={profile} profileMsg={profileMsg} />
 
       <article className="glass-panel p-4">
         <h3 className="text-sm font-medium text-zinc-200">Spending by Category</h3>

@@ -86,6 +86,10 @@ function getRowTone(fraudState, suspicious) {
   return 'border-white/10 bg-white/5'
 }
 
+function isInspectable(t) {
+  return t.suspicious || t.fraudState === 'review' || t.fraudState === 'frozen'
+}
+
 function TransactionList({
   filter,
   frozenCount,
@@ -93,6 +97,7 @@ function TransactionList({
   onApprove,
   onFilter,
   onFreeze,
+  onInspect,
   onReview,
   suspCount,
   totalCount
@@ -132,7 +137,7 @@ function TransactionList({
           {items.map((t, i) => {
             const suspicious = Boolean(t.suspicious)
             const tip = mkTip(t.flags)
-            const showActions = suspicious || t.fraudState === 'review' || t.fraudState === 'frozen'
+            const showActions = isInspectable(t)
 
             return (
               <motion.li
@@ -140,11 +145,22 @@ function TransactionList({
                 animate="show"
                 className={[
                   'group flex items-center justify-between overflow-hidden rounded-xl border px-3 py-2 transition',
+                  showActions ? 'cursor-pointer hover:border-violet-400/35 hover:bg-violet-500/10' : '',
                   getRowTone(t.fraudState, suspicious)
                 ].join(' ')}
                 custom={i}
                 exit="exit"
                 initial="hidden"
+                onClick={() => showActions && onInspect(t)}
+                onKeyDown={(e) => {
+                  if (!showActions) return
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    onInspect(t)
+                  }
+                }}
+                role={showActions ? 'button' : undefined}
+                tabIndex={showActions ? 0 : -1}
                 variants={v}
               >
                 <div className="flex items-center gap-3">
@@ -165,7 +181,10 @@ function TransactionList({
                       <>
                         <button
                           className="inline-flex items-center gap-1 rounded-md border border-rose-300/40 bg-rose-500/20 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-rose-100 transition hover:bg-rose-500/30"
-                          onClick={() => onFreeze(t.id)}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onFreeze(t.id)
+                          }}
                           type="button"
                         >
                           <Snowflake className="h-3 w-3" />
@@ -173,7 +192,10 @@ function TransactionList({
                         </button>
                         <button
                           className="inline-flex items-center gap-1 rounded-md border border-amber-300/40 bg-amber-400/20 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-amber-100 transition hover:bg-amber-400/30"
-                          onClick={() => onReview(t.id)}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onReview(t.id)
+                          }}
                           type="button"
                         >
                           <ScanSearch className="h-3 w-3" />
@@ -181,7 +203,10 @@ function TransactionList({
                         </button>
                         <button
                           className="inline-flex items-center gap-1 rounded-md border border-emerald-300/40 bg-emerald-500/20 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-100 transition hover:bg-emerald-500/30"
-                          onClick={() => onApprove(t.id)}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onApprove(t.id)
+                          }}
                           type="button"
                         >
                           <ShieldCheck className="h-3 w-3" />
