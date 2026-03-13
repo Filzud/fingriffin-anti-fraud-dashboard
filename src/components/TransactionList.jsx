@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   ArrowDownRight,
   ArrowUpRight,
+  MapPin,
   OctagonAlert,
   ScanSearch,
   ShieldCheck,
@@ -28,7 +29,8 @@ const fmt = new Intl.NumberFormat('en-US', {
 const fltOpts = [
   { id: 'all', label: 'All' },
   { id: 'suspicious', label: 'Suspicious' },
-  { id: 'frozen', label: 'Frozen' }
+  { id: 'frozen', label: 'Frozen' },
+  { id: 'approved', label: 'Approved' }
 ]
 
 function RowIcon({ amount, fraudState, suspicious }) {
@@ -79,18 +81,44 @@ function getStateChip(tip, fraudState, suspicious) {
   )
 }
 
-function getRowTone(fraudState, suspicious) {
+function getRowTone(fraudState, suspicious, locAnomaly) {
   if (fraudState === 'frozen') return 'border-rose-700/90 bg-rose-950/55 shadow-[0_0_0_1px_rgba(127,29,29,0.45)]'
   if (fraudState === 'review') return 'border-amber-500/60 bg-amber-500/10 shadow-[0_0_0_1px_rgba(245,158,11,0.18)]'
   if (suspicious) return 'border-rose-500/70 bg-rose-500/10 shadow-[0_0_0_1px_rgba(244,63,94,0.2)]'
+  if (locAnomaly) return 'border-violet-500/60 bg-violet-500/10 shadow-[0_0_0_1px_rgba(139,92,246,0.25)]'
   return 'border-white/10 bg-white/5'
 }
 
-function isInspectable(t) {
+function isActionable(t) {
   return t.suspicious || t.fraudState === 'review' || t.fraudState === 'frozen'
 }
 
+function getCountryChip(country, locAnomaly, typicalRegion) {
+  if (!country) return null
+
+  if (locAnomaly) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 rounded-md border border-violet-300/45 bg-violet-500/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-100"
+        title={typicalRegion ? `Outside typical region: ${typicalRegion}` : 'Outside typical user region'}
+      >
+        <MapPin className="h-3 w-3" />
+        {country} · Location anomaly
+      </span>
+    )
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1 rounded-md border border-white/10 bg-black/20 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-400">
+      <MapPin className="h-3 w-3" />
+      {country}
+    </span>
+  )
+}
+
 function TransactionList({
+  analyzingTx,
+  approvedCount,
   filter,
   frozenCount,
   items,
@@ -100,8 +128,16 @@ function TransactionList({
   onInspect,
   onReview,
   suspCount,
-  totalCount
+  totalCount,
+  typicalRegion
 }) {
+  const cntMap = {
+    all: totalCount,
+    suspicious: suspCount,
+    frozen: frozenCount,
+    approved: approvedCount
+  }
+
   return (
     <section className="glass-panel p-5">
       <div className="mb-4 flex items-center justify-between">
@@ -112,7 +148,7 @@ function TransactionList({
       <div className="mb-4 flex flex-wrap items-center gap-2">
         {fltOpts.map((f) => {
           const active = filter === f.id
-          const cnt = f.id === 'all' ? totalCount : f.id === 'suspicious' ? suspCount : frozenCount
+          const cnt = cntMap[f.id] ?? 0
           return (
             <button
               key={f.id}
@@ -132,35 +168,62 @@ function TransactionList({
         })}
       </div>
 
+      <AnimatePresence>
+        {analyzingTx && (
+          <motion.div
+            animate={{ opacity: 1, y: 0 }}
+            aria-live="polite"
+            className="mb-2 rounded-xl border border-violet-400/35 bg-violet-500/10 px-3 py-2"
+            exit={{ opacity: 0, y: -6 }}
+            initial={{ opacity: 0, y: -6 }}
+            role="status"
+            transition={{ duration: 0.2, ease: 'easeOut' }}
+          >
+            <div className="flex items-center justify-between gap-2 text-xs text-violet-100">
+              <span className="inline-flex items-center gap-2">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-300/70" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-violet-300" />
+                </span>
+                AI analyzing transaction
+              </span>
+              <span className="text-violet-200/80">~1s</span>
+            </div>
+            <p className="mt-1 text-[11px] text-violet-200/85">
+              {analyzingTx.merchant} • {fmt.format(analyzingTx.amount)}
+            </p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <ul className="space-y-2">
         <AnimatePresence initial={false}>
           {items.map((t, i) => {
             const suspicious = Boolean(t.suspicious)
             const tip = mkTip(t.flags)
-            const showActions = isInspectable(t)
+            const actionable = isActionable(t)
+            const locAnomaly = Boolean(t.locationAnomaly)
 
             return (
               <motion.li
                 key={t.id}
                 animate="show"
                 className={[
-                  'group flex items-center justify-between overflow-hidden rounded-xl border px-3 py-2 transition',
-                  showActions ? 'cursor-pointer hover:border-violet-400/35 hover:bg-violet-500/10' : '',
-                  getRowTone(t.fraudState, suspicious)
+                  'group flex cursor-pointer items-center justify-between overflow-hidden rounded-xl border px-3 py-2 transition hover:border-violet-400/35 hover:bg-violet-500/10',
+                  getRowTone(t.fraudState, suspicious, locAnomaly)
                 ].join(' ')}
                 custom={i}
                 exit="exit"
                 initial="hidden"
-                onClick={() => showActions && onInspect(t)}
+                onClick={() => onInspect(t)}
                 onKeyDown={(e) => {
-                  if (!showActions) return
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault()
                     onInspect(t)
                   }
                 }}
-                role={showActions ? 'button' : undefined}
-                tabIndex={showActions ? 0 : -1}
+                role="button"
+                tabIndex={0}
                 variants={v}
               >
                 <div className="flex items-center gap-3">
@@ -170,6 +233,7 @@ function TransactionList({
                   <div>
                     <p className="text-sm text-zinc-100">{t.merchant}</p>
                     <p className="text-xs text-zinc-400">{t.category} • {t.date}</p>
+                    <div className="mt-1">{getCountryChip(t.country, locAnomaly, typicalRegion)}</div>
                   </div>
                 </div>
 
@@ -177,7 +241,7 @@ function TransactionList({
                   <p className={t.amount >= 0 ? 'text-sm font-medium text-emerald-300' : 'text-sm font-medium text-rose-300'}>{fmt.format(t.amount)}</p>
                   <div className="mt-1 flex items-center justify-end gap-1.5">
                     {getStateChip(tip, t.fraudState, suspicious)}
-                    {showActions && (
+                    {actionable && (
                       <>
                         <button
                           className="inline-flex items-center gap-1 rounded-md border border-rose-300/40 bg-rose-500/20 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-rose-100 transition hover:bg-rose-500/30"
